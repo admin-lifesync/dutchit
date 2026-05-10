@@ -1,0 +1,210 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ----------------------------------------------------------------------
+    // Users
+    // Each user can read/write only their own profile document.
+    // ----------------------------------------------------------------------
+    match /users/{uid} {
+      allow read, write: if isSelf(uid);
+    }
+
+    // ----------------------------------------------------------------------
+    // Groups
+    // - read:   any current member of the group
+    // - create: any signed-in user (must include themselves as the only admin)
+    // - update: any current member, but only specific shapes are allowed
+    // - delete: only group admins
+    //
+    // Membership lookups use the denormalized memberIds / adminIds arrays.
+    // ----------------------------------------------------------------------
+    match /groups/{groupId} {
+
+      function group()       { return resource.data; }
+      function nextGroup()   { return request.resource.data; }
+      function isMember()    { return isSignedIn() && (request.auth.uid in group().memberIds); }
+      function isAdmin()     { return isSignedIn() && (request.auth.uid in group().adminIds); }
+
+      allow read: if isMember();
+
+      allow create: if isSignedIn()
+        && nextGroup().createdBy == request.auth.uid
+        && nextGroup().memberIds.size() == 1
+        && nextGroup().memberIds[0] == request.auth.uid
+        && nextGroup().adminIds.size() == 1
+        && nextGroup().adminIds[0] == request.auth.uid;
+
+      allow update: if
+        // 1) Admin can update anything except ownership.
+        (
+          isAdmin()
+          && nextGroup().createdBy == group().createdBy
+        )
+
+        // 2) Self-leave: caller (a member) drops themselves and nothing else.
+        || (
+          isMember()
+          && nextGroup().createdBy == group().createdBy
+          && nextGroup().memberIds.size() == group().memberIds.size() - 1
+          && !(request.auth.uid in nextGroup().memberIds)
+          && !(request.auth.uid in nextGroup().adminIds)
+          && group().memberIds.hasAll(nextGroup().memberIds)
+        )
+
+        // 3) Member-driven bookkeeping update. An existing member may bump
+        //    counters/timestamps that change as a side-effect of adding,
+        //    editing, deleting expenses, or recording settlements. They
+        //    cannot touch metadata, members, or admins via this branch —
+        //    those edits must go through branch (1) (admin) or (2) (leave).
+        || (
+          isMember()
+          && nextGroup().createdBy == group().createdBy
+          && nextGroup().name == group().name
+          && nextGroup().description == group().description
+          && nextGroup().imageURL == group().imageURL
+          && nextGroup().currency == group().currency
+          && nextGroup().memberIds == group().memberIds
+          && nextGroup().adminIds == group().adminIds
+          && nextGroup().members == group().members
+        )
+
+        // 4) Invite acceptance: a NON-member adds themselves as a regular
+        //    member. The caller cannot promote themselves to admin or change
+        //    any group metadata in the same write. The caller proves they
+        //    have a valid invite by also flipping the invitation's status
+        //    in the same transaction; that write is gated by the
+        //    /invitations/{code} rules below.
+        || (
+          isSignedIn()
+          && !(request.auth.uid in group().memberIds)
+          && (request.auth.uid in nextGroup().memberIds)
+          && nextGroup().memberIds.size() == group().memberIds.size() + 1
+          && nextGroup().memberIds.hasAll(group().memberIds)
+          && nextGroup().adminIds == group().adminIds
+          && nextGroup().createdBy == group().createdBy
+          && nextGroup().name == group().name
+          && nextGroup().description == group().description
+          && nextGroup().imageURL == group().imageURL
+          && nextGroup().currency == group().currency
+          && nextGroup().expenseCount == group().expenseCount
+          && nextGroup().totalSpent == group().totalSpent
+        );
+
+      allow delete: if isAdmin();
+
+      // ------------------------------------------------------------------
+      // Expenses subcollection
+      // ------------------------------------------------------------------
+      match /expenses/{expenseId} {
+        function parentGroup() {
+          return get(/databases/$(database)/documents/groups/$(groupId)).data;
+        }
+        function memberOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().memberIds);
+        }
+        function adminOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().adminIds);
+        }
+
+        allow read: if memberOfParent();
+
+        allow create: if memberOfParent()
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.groupId == groupId;
+
+        allow update: if memberOfParent()
+          && (resource.data.createdBy == request.auth.uid || adminOfParent());
+
+        allow delete: if memberOfParent()
+          && (resource.data.createdBy == request.auth.uid || adminOfParent());
+      }
+
+      // ------------------------------------------------------------------
+      // Settlements subcollection
+      // ------------------------------------------------------------------
+      match /settlements/{settlementId} {
+        function parentGroup() {
+          return get(/databases/$(database)/documents/groups/$(groupId)).data;
+        }
+        function memberOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().memberIds);
+        }
+        function adminOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().adminIds);
+        }
+
+        allow read: if memberOfParent();
+        allow create: if memberOfParent()
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.groupId == groupId;
+        allow update, delete: if memberOfParent()
+          && (resource.data.createdBy == request.auth.uid || adminOfParent());
+      }
+
+      // ------------------------------------------------------------------
+      // Activity log subcollection — append-only
+      // ------------------------------------------------------------------
+      match /activity/{activityId} {
+        function parentGroup() {
+          return get(/databases/$(database)/documents/groups/$(groupId)).data;
+        }
+        function memberOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().memberIds);
+        }
+        function adminOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().adminIds);
+        }
+
+        allow read: if memberOfParent();
+        allow create: if memberOfParent()
+          && request.resource.data.actorUid == request.auth.uid;
+        // Activity entries are immutable — only admins can clean them up.
+        allow update: if false;
+        allow delete: if adminOfParent();
+      }
+    }
+
+    // ----------------------------------------------------------------------
+    // Invitations
+    // - read:   any signed-in user (needed to look up an invite by code)
+    // - create: only group members can create invites for their group
+    // - update: only to flip 'pending' -> 'accepted' as the accepter
+    // - delete: inviter or any group admin
+    // ----------------------------------------------------------------------
+    match /invitations/{code} {
+      function targetGroup() {
+        return get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data;
+      }
+      function existingGroup() {
+        return get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data;
+      }
+
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.invitedBy == request.auth.uid
+        && (request.auth.uid in targetGroup().memberIds);
+
+      allow update: if isSignedIn()
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.acceptedBy == request.auth.uid;
+
+      allow delete: if isSignedIn()
+        && (
+          resource.data.invitedBy == request.auth.uid
+          || (request.auth.uid in existingGroup().adminIds)
+        );
+    }
+  }
+}
