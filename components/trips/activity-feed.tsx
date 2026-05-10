@@ -7,6 +7,7 @@ import {
   Plus,
   Trash2,
   UserMinus,
+  UserPlus,
   Wallet,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ const ICONS: Record<ActivityType, React.ComponentType<{ className?: string }>> =
   "group.created": CircleDot,
   "member.joined": LogIn,
   "member.removed": UserMinus,
+  "member.requested": UserPlus,
   "expense.created": Plus,
   "expense.updated": Pencil,
   "expense.deleted": Trash2,

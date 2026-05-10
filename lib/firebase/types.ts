@@ -29,6 +29,8 @@ export interface GroupMemberSummary {
   role: Role;
 }
 
+export type JoinPolicy = "open" | "admin-approval" | "member-approval";
+
 export interface GroupDoc {
   id: string;
   name: string;
@@ -48,6 +50,19 @@ export interface GroupDoc {
   expenseCount: number;
   /** Denormalized total spent (in group currency). */
   totalSpent: number;
+  /**
+   * Stable invite code for this trip. Generated at creation time and stays the
+   * same forever (admins can rotate it via {@link rotateInviteCode}).
+   * The same code lets anyone open `/invite/<code>` and request access.
+   */
+  inviteCode: string;
+  /**
+   * Who is allowed to join via the invite link:
+   *  - `open`             — anyone with the link joins immediately
+   *  - `admin-approval`   — only admins can approve incoming requests
+   *  - `member-approval`  — any existing member can approve
+   */
+  joinPolicy: JoinPolicy;
 }
 
 export interface SplitValue {
@@ -94,27 +109,49 @@ export interface SettlementDoc {
   createdBy: string;
 }
 
-export type InvitationStatus = "pending" | "accepted" | "revoked";
-
+/**
+ * Public lookup doc for an invite code. Lives at `/invitations/{code}` and is
+ * world-readable for any signed-in user — its only purpose is to map a short
+ * URL-safe code back to a group + display the trip name & join policy on the
+ * `/invite/<code>` landing page WITHOUT requiring read access on the group.
+ *
+ * One per group, lifecycle managed entirely by admins.
+ */
 export interface InvitationDoc {
   id: string;
+  /** Stable code, also stored on `GroupDoc.inviteCode`. */
+  code: string;
   groupId: string;
   groupName: string;
-  /** Random short code used in the invite URL. */
-  code: string;
-  /** Optional: invite targeted to a specific email. */
-  email: string | null;
-  invitedBy: string;
-  status: InvitationStatus;
+  joinPolicy: JoinPolicy;
+  /** Admin uid that created or last rotated this code. */
+  createdBy: string;
   createdAt: Timestamp;
-  acceptedAt: Timestamp | null;
-  acceptedBy: string | null;
+}
+
+export type JoinRequestStatus = "pending" | "approved" | "rejected";
+
+/**
+ * Lives at `/groups/{groupId}/joinRequests/{uid}`. One doc per requester.
+ * Created by the would-be joiner; transitioned by an approver.
+ */
+export interface JoinRequestDoc {
+  id: string;
+  uid: string;
+  name: string;
+  email: string;
+  photoURL: string | null;
+  status: JoinRequestStatus;
+  requestedAt: Timestamp;
+  decidedAt: Timestamp | null;
+  decidedBy: string | null;
 }
 
 export type ActivityType =
   | "group.created"
   | "member.joined"
   | "member.removed"
+  | "member.requested"
   | "expense.created"
   | "expense.updated"
   | "expense.deleted"

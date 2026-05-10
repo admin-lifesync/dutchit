@@ -483,18 +483,53 @@ This guarantees at most `N - 1` transfers for `N` members and never produces fra
 
 ## 13. How invite links work
 
-1. Inside a trip, an existing member opens **Members → Invite**.
-2. The app calls `createInvitation()` which writes a document to `invitations/{code}` with a 10-character random `code`, a reference to the group, and `status: 'pending'`.
-3. The member shares the URL `${NEXT_PUBLIC_APP_URL}/invite/{code}` (any chat app, email, etc.).
-4. The invitee opens the link.
-   - If they aren't signed in, the protected route automatically redirects them to `/signin?next=/invite/{code}` and back after auth.
-5. The invite landing page calls `acceptInvitation()` inside a Firestore transaction that:
-   - Verifies the invite is still `pending`.
-   - Adds the user to the group's `memberIds` and `members` array (as a non-admin).
-   - Marks the invite as `accepted` and stamps `acceptedBy` + `acceptedAt`.
-6. The activity feed gains a "X joined the group" entry, balances and expenses become live for the new member instantly via Firestore listeners.
+Each trip has **one** durable invite link — same URL for everyone, reusable
+indefinitely, controlled by the trip's **join policy**.
 
-Security rules ensure invites can only be _flipped_ from pending → accepted by the user accepting it, and that membership additions only happen via this single transactional shape.
+**Join policies** (admin-configurable from the share dialog):
+
+| Policy             | Behaviour |
+| ------------------ | --------- |
+| `open`             | Anyone with the link joins immediately. Best for trusted groups. |
+| `admin-approval`   | Visitors create a join request; only trip admins can approve. |
+| `member-approval`  | Visitors create a join request; any existing member can approve. |
+
+**Lifecycle**:
+
+1. When a trip is created, `createGroup()` generates a 10-char `inviteCode` on the
+   group doc and writes a public `invitations/{code}` lookup doc that maps the
+   code back to `{ groupId, groupName, joinPolicy }`.
+2. Members open **Members → Share link** to copy / share the URL
+   `${NEXT_PUBLIC_APP_URL}/invite/{code}`. The link is rendered as a real
+   `<a href>` so messaging apps automatically linkify it.
+3. The visitor opens the link. If they aren't signed in, they're routed to
+   `/signin?next=/invite/{code}` and back after auth.
+4. Branching by policy on `/invite/{code}`:
+   - **Open** → `joinOpenGroup()` does a single `arrayUnion` write to the group
+     and the visitor lands on `/trips/{groupId}` immediately.
+   - **Admin / member approval** → `requestToJoin()` creates a doc at
+     `groups/{gid}/joinRequests/{visitorUid}` with `status: 'pending'`. The
+     visitor sees a "Waiting for approval" card; approvers see a pending-list
+     card on the trip's Members tab.
+5. An approver clicks Approve → the request flips to `approved`. The visitor's
+   own listener (`watchMyJoinRequest`) sees the change and the page calls
+   `finalizeApprovedJoin()`, which `arrayUnion`s them into the group and
+   redirects.
+6. **Rotating a link**: admins can invalidate the URL at any time via
+   `rotateInviteCode()` — the old `invitations/{code}` doc is deleted and a new
+   one is written.
+
+Security model:
+
+- Self-join (rule branch 4 in `firestore.rules`) only succeeds when the group's
+  `joinPolicy == 'open'` **or** the caller owns an `approved` join-request doc.
+  Admins cannot be self-promoted via this branch — `adminIds` must equal the
+  previous value.
+- The `invitations` collection is world-readable for any signed-in user, but
+  contains only safe display fields (no membership lists, no balances).
+- `joinRequests/{uid}` reads are restricted to the requester themselves and
+  existing trip members; updates are restricted to approvers (admin always,
+  member iff the policy allows).
 
 ---
 

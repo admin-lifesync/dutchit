@@ -115,9 +115,10 @@ export default function DashboardPage() {
             Here&apos;s what&apos;s happening across your trips.
           </p>
         </div>
-        <Button asChild size="sm" className="hidden sm:inline-flex">
-          <Link href="/trips/new">
-            <Plus className="h-4 w-4" /> New trip
+        <Button asChild size="sm">
+          <Link href="/trips/new" aria-label="Create a new trip">
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">New trip</span>
           </Link>
         </Button>
       </div>
@@ -229,11 +230,6 @@ export default function DashboardPage() {
         </Card>
       </section>
 
-      <Button asChild size="lg" className="fixed bottom-20 right-4 z-20 h-12 rounded-full shadow-lg sm:hidden">
-        <Link href="/trips/new">
-          <Plus className="h-4 w-4" /> New trip
-        </Link>
-      </Button>
     </div>
   );
 }

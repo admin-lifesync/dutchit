@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CategoryIcon, EXPENSE_CATEGORIES } from "@/components/expenses/category-icon";
-import { computeSplit, defaultValuesFor } from "@/lib/splits/compute";
+import { computeSplit } from "@/lib/splits/compute";
 import { getCurrencySymbol } from "@/lib/currency";
 import { initials, round2, sum } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +52,11 @@ const SPLIT_TABS: { value: SplitType; label: string }[] = [
   { value: "personal", label: "Personal" },
 ];
 
+/** Empty per-uid map. Each editable split type owns its own copy of this so
+ *  switching tabs never bleeds values between, say, shares and percent. */
+type ValueMap = Record<string, number>;
+const EMPTY_VALUES: ValueMap = {};
+
 export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -64,7 +69,12 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
   const [paidBy, setPaidBy] = useState<string>(user?.uid || "");
   const [participants, setParticipants] = useState<string[]>([]);
   const [splitType, setSplitType] = useState<SplitType>("equal");
-  const [values, setValues] = useState<Record<string, number>>({});
+  // One independent value map per editable split type. Switching tabs keeps
+  // each one intact so users can experiment without losing what they typed.
+  // Default for every uid is 0 (per UX requirement).
+  const [exactValues, setExactValues] = useState<ValueMap>(EMPTY_VALUES);
+  const [percentValues, setPercentValues] = useState<ValueMap>(EMPTY_VALUES);
+  const [shareValues, setShareValues] = useState<ValueMap>(EMPTY_VALUES);
   const [personalUid, setPersonalUid] = useState<string>(user?.uid || "");
   const [notes, setNotes] = useState("");
 
@@ -78,9 +88,13 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
       setPaidBy(expense.paidBy);
       setParticipants(expense.participants);
       setSplitType(expense.splitType);
-      const vals: Record<string, number> = {};
+      // Hydrate the matching value map only — leave the others empty so the
+      // user can switch tabs and start fresh from 0.
+      const vals: ValueMap = {};
       expense.splitValues.forEach((v) => (vals[v.uid] = v.value));
-      setValues(vals);
+      setExactValues(expense.splitType === "exact" ? vals : EMPTY_VALUES);
+      setPercentValues(expense.splitType === "percent" ? vals : EMPTY_VALUES);
+      setShareValues(expense.splitType === "share" ? vals : EMPTY_VALUES);
       setPersonalUid(expense.splitType === "personal" ? expense.participants[0] || "" : "");
       setNotes(expense.notes || "");
     } else {
@@ -91,7 +105,9 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
       const allIds = group.members.map((m) => m.uid);
       setParticipants(allIds);
       setSplitType("equal");
-      setValues({});
+      setExactValues(EMPTY_VALUES);
+      setPercentValues(EMPTY_VALUES);
+      setShareValues(EMPTY_VALUES);
       setPersonalUid(user?.uid || "");
       setNotes("");
     }
@@ -100,20 +116,25 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
   const numericAmount = Number(amount);
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
 
-  // Refresh default values when split type / participants / amount change.
-  useEffect(() => {
-    if (!amountValid) return;
-    if (splitType === "personal" || splitType === "equal") return;
-    setValues((prev) => {
-      const out: Record<string, number> = {};
-      const defaults = defaultValuesFor(splitType, participants, numericAmount);
-      for (const uid of participants) {
-        out[uid] = prev[uid] ?? defaults[uid] ?? 0;
-      }
-      return out;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [splitType, participants.join(","), amountValid]);
+  // Pick the right value map (and setter) for the active split type.
+  const activeValues =
+    splitType === "exact"
+      ? exactValues
+      : splitType === "percent"
+      ? percentValues
+      : splitType === "share"
+      ? shareValues
+      : EMPTY_VALUES;
+
+  const setActiveValue = useCallback(
+    (uid: string, v: number) => {
+      const next = (prev: ValueMap) => ({ ...prev, [uid]: v });
+      if (splitType === "exact") setExactValues(next);
+      else if (splitType === "percent") setPercentValues(next);
+      else if (splitType === "share") setShareValues(next);
+    },
+    [splitType]
+  );
 
   const splitResult = useMemo(() => {
     if (!amountValid) return null;
@@ -122,10 +143,17 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
       splitType,
       participants:
         splitType === "personal" ? [personalUid].filter(Boolean) : participants,
-      values,
+      values: activeValues,
       personalUid,
     });
-  }, [amountValid, numericAmount, splitType, participants, values, personalUid]);
+  }, [
+    amountValid,
+    numericAmount,
+    splitType,
+    participants,
+    activeValues,
+    personalUid,
+  ]);
 
   const totalAssigned = useMemo(() => {
     if (!splitResult) return 0;
@@ -311,13 +339,11 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
                 group={group}
                 splitType={splitType}
                 participants={participants}
-                values={values}
+                values={activeValues}
                 amount={numericAmount}
                 splitValues={splitResult?.splitValues || []}
                 onToggle={toggleParticipant}
-                onChangeValue={(uid, v) =>
-                  setValues((prev) => ({ ...prev, [uid]: v }))
-                }
+                onChangeValue={setActiveValue}
                 symbol={symbol}
               />
             )}

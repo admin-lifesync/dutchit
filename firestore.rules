@@ -23,17 +23,30 @@ service cloud.firestore {
     // Groups
     // - read:   any current member of the group
     // - create: any signed-in user (must include themselves as the only admin)
-    // - update: any current member, but only specific shapes are allowed
+    // - update: rule branches below — admins, self-leave, member bookkeeping,
+    //           or self-join (gated by group join policy / approved request)
     // - delete: only group admins
     //
     // Membership lookups use the denormalized memberIds / adminIds arrays.
     // ----------------------------------------------------------------------
     match /groups/{groupId} {
 
-      function group()       { return resource.data; }
-      function nextGroup()   { return request.resource.data; }
-      function isMember()    { return isSignedIn() && (request.auth.uid in group().memberIds); }
-      function isAdmin()     { return isSignedIn() && (request.auth.uid in group().adminIds); }
+      function group()      { return resource.data; }
+      function nextGroup()  { return request.resource.data; }
+      function isMember()   { return isSignedIn() && (request.auth.uid in group().memberIds); }
+      function isAdmin()    { return isSignedIn() && (request.auth.uid in group().adminIds); }
+
+      // Default join policy for legacy groups without the field.
+      function effectivePolicy() {
+        return group().get('joinPolicy', 'open');
+      }
+
+      function approvedRequestExistsForCaller() {
+        // Returns true iff the caller owns an `approved` join request for
+        // this group. Used to gate self-add for admin/member-approval flows.
+        return exists(/databases/$(database)/documents/groups/$(groupId)/joinRequests/$(request.auth.uid))
+          && get(/databases/$(database)/documents/groups/$(groupId)/joinRequests/$(request.auth.uid)).data.status == 'approved';
+      }
 
       allow read: if isMember();
 
@@ -64,8 +77,7 @@ service cloud.firestore {
         // 3) Member-driven bookkeeping update. An existing member may bump
         //    counters/timestamps that change as a side-effect of adding,
         //    editing, deleting expenses, or recording settlements. They
-        //    cannot touch metadata, members, or admins via this branch —
-        //    those edits must go through branch (1) (admin) or (2) (leave).
+        //    cannot touch metadata, members, admins, or join settings.
         || (
           isMember()
           && nextGroup().createdBy == group().createdBy
@@ -76,14 +88,16 @@ service cloud.firestore {
           && nextGroup().memberIds == group().memberIds
           && nextGroup().adminIds == group().adminIds
           && nextGroup().members == group().members
+          && nextGroup().get('inviteCode', '') == group().get('inviteCode', '')
+          && nextGroup().get('joinPolicy', 'open') == group().get('joinPolicy', 'open')
         )
 
-        // 4) Invite acceptance: a NON-member adds themselves as a regular
-        //    member. The caller cannot promote themselves to admin or change
-        //    any group metadata in the same write. The caller proves they
-        //    have a valid invite by also flipping the invitation's status
-        //    in the same transaction; that write is gated by the
-        //    /invitations/{code} rules below.
+        // 4) Self-join: a NON-member adds themselves as a regular member.
+        //    Allowed only when:
+        //      - group is `open`, OR
+        //      - the caller owns an `approved` join-request doc.
+        //    The caller cannot promote themselves to admin or change any
+        //    group metadata in the same write.
         || (
           isSignedIn()
           && !(request.auth.uid in group().memberIds)
@@ -98,6 +112,9 @@ service cloud.firestore {
           && nextGroup().currency == group().currency
           && nextGroup().expenseCount == group().expenseCount
           && nextGroup().totalSpent == group().totalSpent
+          && nextGroup().get('inviteCode', '') == group().get('inviteCode', '')
+          && nextGroup().get('joinPolicy', 'open') == group().get('joinPolicy', 'open')
+          && (effectivePolicy() == 'open' || approvedRequestExistsForCaller())
         );
 
       allow delete: if isAdmin();
@@ -172,14 +189,58 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if adminOfParent();
       }
+
+      // ------------------------------------------------------------------
+      // Join requests subcollection
+      // - read:   own request, OR any group member (so admins/members can
+      //           review pending requests)
+      // - create: any signed-in user, only as themselves, only as 'pending'
+      // - update: only an approver can flip the status. Approver = admin
+      //           always; member if joinPolicy == 'member-approval'.
+      //           Approver may also reset to 'pending' (no-op cleanup).
+      // - delete: the requester themselves (cancel) or any admin.
+      // ------------------------------------------------------------------
+      match /joinRequests/{requesterUid} {
+        function parentGroup() {
+          return get(/databases/$(database)/documents/groups/$(groupId)).data;
+        }
+        function isMemberOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().memberIds);
+        }
+        function isAdminOfParent() {
+          return isSignedIn() && (request.auth.uid in parentGroup().adminIds);
+        }
+        function parentPolicy() {
+          return parentGroup().get('joinPolicy', 'open');
+        }
+        function isApprover() {
+          return isAdminOfParent()
+            || (parentPolicy() == 'member-approval' && isMemberOfParent());
+        }
+
+        allow read: if isSelf(requesterUid) || isMemberOfParent();
+
+        allow create: if isSelf(requesterUid)
+          && request.resource.data.uid == requesterUid
+          && request.resource.data.status == 'pending';
+
+        allow update: if isApprover()
+          && request.resource.data.uid == resource.data.uid
+          && (
+            request.resource.data.status == 'approved'
+            || request.resource.data.status == 'rejected'
+          );
+
+        allow delete: if isSelf(requesterUid) || isAdminOfParent();
+      }
     }
 
     // ----------------------------------------------------------------------
-    // Invitations
-    // - read:   any signed-in user (needed to look up an invite by code)
-    // - create: only group members can create invites for their group
-    // - update: only to flip 'pending' -> 'accepted' as the accepter
-    // - delete: inviter or any group admin
+    // Invitations (public lookup, one per trip)
+    // - read:   any signed-in user (needed to render `/invite/<code>`)
+    // - create: only an admin of the target group, and only by themselves
+    // - update: only an admin of the target group (e.g. join-policy sync)
+    // - delete: only an admin of the target group (rotate / clean up)
     // ----------------------------------------------------------------------
     match /invitations/{code} {
       function targetGroup() {
@@ -192,19 +253,15 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn()
-        && request.resource.data.invitedBy == request.auth.uid
-        && (request.auth.uid in targetGroup().memberIds);
+        && request.resource.data.createdBy == request.auth.uid
+        && (request.auth.uid in targetGroup().adminIds);
 
       allow update: if isSignedIn()
-        && resource.data.status == 'pending'
-        && request.resource.data.status == 'accepted'
-        && request.resource.data.acceptedBy == request.auth.uid;
+        && resource.data.groupId == request.resource.data.groupId
+        && (request.auth.uid in existingGroup().adminIds);
 
       allow delete: if isSignedIn()
-        && (
-          resource.data.invitedBy == request.auth.uid
-          || (request.auth.uid in existingGroup().adminIds)
-        );
+        && (request.auth.uid in existingGroup().adminIds);
     }
   }
 }

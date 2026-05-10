@@ -212,10 +212,11 @@ export default function TripDetailPage() {
 
       <Button
         size="lg"
-        className="fixed bottom-20 right-4 z-20 h-12 rounded-full shadow-lg sm:hidden"
+        aria-label="Add expense"
+        className="fixed right-4 z-20 h-14 rounded-full px-5 shadow-lg sm:hidden bottom-[calc(env(safe-area-inset-bottom)+5rem)]"
         onClick={() => setAddOpen(true)}
       >
-        <Plus className="h-4 w-4" /> Add
+        <Plus className="h-5 w-5" /> Add expense
       </Button>
 
       <ExpenseForm

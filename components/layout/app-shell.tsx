@@ -85,7 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="container py-6 pb-24 sm:pb-10">{children}</main>
+      <main className="container py-6 pb-32 sm:pb-10">{children}</main>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 border-t bg-background/95 backdrop-blur safe-bottom sm:hidden">
         <div className="grid grid-cols-2">
