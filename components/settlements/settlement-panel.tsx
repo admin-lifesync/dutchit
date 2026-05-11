@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowRight,
   CheckCircle2,
   CircleHelp,
   Loader2,
@@ -26,8 +27,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatMoney } from "@/lib/currency";
-import { initials, formatRelativeTime } from "@/lib/utils";
+import { initials, formatRelativeTime, round2, sum } from "@/lib/utils";
 import { createSettlement } from "@/lib/firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { handleError } from "@/lib/errors/handle-error";
@@ -66,6 +74,10 @@ export function SettlementPanel({
   const [mode, setMode] = useState<SettlementViewMode>("direct");
   const [pending, setPending] = useState<Transfer | null>(null);
   const [recordingKey, setRecordingKey] = useState<string | null>(null);
+  /** Creditor picked in Direct mode (who people paid for on the trip). */
+  const [directCreditorUid, setDirectCreditorUid] = useState<string | null>(
+    null
+  );
 
   const isAdmin =
     group.members.find((m) => m.uid === user?.uid)?.role === "admin";
@@ -74,6 +86,26 @@ export function SettlementPanel({
     () => grossDirectedOwingFromExpenses(expenses),
     [expenses]
   );
+  const creditorGroups = useMemo(
+    () => groupDirectTransfersByCreditor(directTransfers, group),
+    [directTransfers, group]
+  );
+
+  useEffect(() => {
+    if (mode !== "direct") return;
+    if (creditorGroups.length === 0) {
+      setDirectCreditorUid(null);
+      return;
+    }
+    setDirectCreditorUid((prev) => {
+      if (prev && creditorGroups.some((g) => g.toUid === prev)) return prev;
+      if (user?.uid && creditorGroups.some((g) => g.toUid === user.uid)) {
+        return user.uid;
+      }
+      return creditorGroups[0]!.toUid;
+    });
+  }, [mode, creditorGroups, user?.uid]);
+
   const minimizedTransfers = useMemo(
     () => simplifyDebts(balances),
     [balances]
@@ -81,6 +113,11 @@ export function SettlementPanel({
 
   const activeTransfers =
     mode === "direct" ? directTransfers : minimizedTransfers;
+
+  const selectedCreditorGroup = useMemo(() => {
+    if (mode !== "direct" || !directCreditorUid) return null;
+    return creditorGroups.find((g) => g.toUid === directCreditorUid) ?? null;
+  }, [mode, directCreditorUid, creditorGroups]);
 
   const tryMarkPaid = useCallback(
     (t: Transfer) => {
@@ -266,7 +303,7 @@ export function SettlementPanel({
           </CardTitle>
           <CardDescription>
             {mode === "direct"
-              ? "Each row adds up every time someone owed the payer on a shared expense. This is the trip ledger, not the smallest number of transfers."
+              ? "Grouped by who paid for things on the trip. Pick a person to see everyone who still owes them from the expense log."
               : "Fewest transfers from current balances — usually fewer lines than Direct."}
           </CardDescription>
         </CardHeader>
@@ -295,7 +332,81 @@ export function SettlementPanel({
               transition={{ duration: 0.18 }}
               className="space-y-3"
             >
-              {activeTransfers.length === 0 ? (
+              {mode === "direct" ? (
+                directTransfers.length === 0 ? (
+                  <div className="flex items-center gap-3 rounded-xl border border-dashed bg-card/50 p-4 text-sm">
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                    <p className="min-w-0 leading-relaxed text-muted-foreground">
+                      All settled up in this view — nothing left to pay.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="direct-creditor" className="text-foreground">
+                        Money owed to
+                      </Label>
+                      <Select
+                        value={directCreditorUid ?? undefined}
+                        onValueChange={setDirectCreditorUid}
+                      >
+                        <SelectTrigger
+                          id="direct-creditor"
+                          className="h-11 w-full text-left font-normal"
+                        >
+                          <SelectValue placeholder="Pick someone" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {creditorGroups.map((g) => (
+                            <SelectItem key={g.toUid} value={g.toUid}>
+                              <span className="font-medium">{g.name}</span>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                · {g.transfers.length}{" "}
+                                {g.transfers.length === 1 ? "person" : "people"}{" "}
+                                · {formatMoney(g.total, group.currency)} total
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {selectedCreditorGroup ? (
+                      <>
+                        <p className="text-sm text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {selectedCreditorGroup.name}
+                          </span>{" "}
+                          is owed these amounts from the trip ledger (before
+                          global minimization).
+                        </p>
+                        <ul className="space-y-3">
+                          {selectedCreditorGroup.transfers.map((t, i) => {
+                            const key = settlementTransferKey(t);
+                            const involvesYou =
+                              user?.uid === t.fromUid ||
+                              user?.uid === t.toUid;
+                            return (
+                              <li key={`direct-${i}-${key}`}>
+                                <DirectDebtorRow
+                                  group={group}
+                                  transfer={t}
+                                  creditorUid={selectedCreditorGroup.toUid}
+                                  currency={group.currency}
+                                  involvesYou={!!involvesYou}
+                                  isRecording={recordingKey === key}
+                                  onMarkPaid={() => tryMarkPaid(t)}
+                                />
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </>
+                    ) : null}
+                  </div>
+                )
+              ) : activeTransfers.length === 0 ? (
                 <div className="flex items-center gap-3 rounded-xl border border-dashed bg-card/50 p-4 text-sm">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
                   <p className="min-w-0 leading-relaxed text-muted-foreground">
@@ -422,6 +533,114 @@ export function SettlementPanel({
           }
         }}
       />
+    </div>
+  );
+}
+
+interface CreditorGroup {
+  toUid: string;
+  name: string;
+  total: number;
+  transfers: Transfer[];
+}
+
+function groupDirectTransfersByCreditor(
+  transfers: Transfer[],
+  group: GroupDoc
+): CreditorGroup[] {
+  const byTo = new Map<string, Transfer[]>();
+  for (const t of transfers) {
+    const list = byTo.get(t.toUid) ?? [];
+    list.push(t);
+    byTo.set(t.toUid, list);
+  }
+  const out: CreditorGroup[] = [];
+  for (const [toUid, list] of byTo) {
+    const m = group.members.find((mm) => mm.uid === toUid);
+    list.sort(
+      (a, b) =>
+        b.amount - a.amount ||
+        a.fromUid.localeCompare(b.fromUid)
+    );
+    const total = round2(sum(list.map((x) => x.amount)));
+    out.push({
+      toUid,
+      name: m?.name ?? "Member",
+      total,
+      transfers: list,
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return out;
+}
+
+function DirectDebtorRow({
+  group,
+  transfer,
+  creditorUid,
+  currency,
+  involvesYou,
+  isRecording,
+  onMarkPaid,
+}: {
+  group: GroupDoc;
+  transfer: Transfer;
+  creditorUid: string;
+  currency: string;
+  involvesYou: boolean;
+  isRecording: boolean;
+  onMarkPaid: () => void;
+}) {
+  const from = group.members.find((m) => m.uid === transfer.fromUid);
+  const to = group.members.find((m) => m.uid === creditorUid);
+  const fromName = from?.name ?? "Member";
+  const toName = to?.name ?? "Member";
+
+  return (
+    <div className="flex min-w-0 flex-col gap-3 rounded-2xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:gap-4">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <Avatar className="h-10 w-10 shrink-0">
+          {from?.photoURL && (
+            <AvatarImage src={from.photoURL} alt={fromName} />
+          )}
+          <AvatarFallback className="text-xs">{initials(fromName)}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="break-words text-base font-semibold leading-snug text-foreground">
+            {fromName}
+          </p>
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+            <ArrowRight className="size-3 shrink-0" aria-hidden />
+            <span>owes</span>
+            <span className="font-medium text-foreground">{toName}</span>
+            {involvesYou ? (
+              <span className="text-primary">· involves you</span>
+            ) : null}
+          </p>
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-end sm:gap-4 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+        <p className="font-mono text-xl font-semibold tabular-nums sm:text-right">
+          {formatMoney(transfer.amount, currency)}
+        </p>
+        <Button
+          type="button"
+          variant="default"
+          className="h-11 w-full shrink-0 touch-manipulation sm:h-10 sm:w-36"
+          disabled={isRecording}
+          aria-busy={isRecording}
+          onClick={onMarkPaid}
+        >
+          {isRecording ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            "Mark paid"
+          )}
+        </Button>
+      </div>
     </div>
   );
 }
