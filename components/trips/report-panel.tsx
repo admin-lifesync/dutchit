@@ -64,9 +64,6 @@ export function ReportPanel({ group, expenses, settlements, currentUid }: Props)
     <div className="space-y-4">
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="space-y-3 p-4 text-sm leading-relaxed">
-          <p className="font-medium text-foreground">
-            {group.name}: in plain English
-          </p>
           <p className="text-muted-foreground">
             Together you logged{" "}
             <span className="font-semibold text-foreground">
