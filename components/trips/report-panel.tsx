@@ -62,26 +62,89 @@ export function ReportPanel({ group, expenses, settlements, currentUid }: Props)
 
   return (
     <div className="space-y-4">
+      <Card className="border-primary/20 bg-primary/5">
+        <CardContent className="space-y-3 p-4 text-sm leading-relaxed">
+          <p className="font-medium text-foreground">
+            {group.name}: in plain English
+          </p>
+          <p className="text-muted-foreground">
+            Together you logged{" "}
+            <span className="font-semibold text-foreground">
+              {report.expenseCount} expense
+              {report.expenseCount === 1 ? "" : "s"}
+            </span>{" "}
+            for a combined{" "}
+            <span className="font-semibold text-foreground">
+              {formatMoney(report.totalSpent, group.currency)}
+            </span>
+            . Below is who actually paid from their pocket, what the trip
+            cost each person after splits, and who is still up or down.
+          </p>
+          <ul className="space-y-2 border-t border-primary/10 pt-3">
+            {report.people.map((p) => (
+              <li key={p.uid} className="text-sm">
+                <span className="font-medium text-foreground">{p.name}</span>
+                {p.uid === currentUid ? (
+                  <Badge variant="secondary" className="ml-1.5 align-middle text-[10px]">
+                    you
+                  </Badge>
+                ) : null}
+                {" — "}
+                <span className="text-muted-foreground">
+                  paid{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatMoney(p.totalPaid, group.currency)}
+                  </span>{" "}
+                  for the group on this trip. After splits,{" "}
+                  <span className="font-semibold text-foreground">
+                    this trip cost them {formatMoney(p.totalShare, group.currency)}
+                  </span>{" "}
+                  in total
+                  {p.net > 0.01 && (
+                    <>
+                      ; they should get back about{" "}
+                      <span className="font-semibold text-success">
+                        {formatMoney(p.net, group.currency)}
+                      </span>
+                    </>
+                  )}
+                  {p.net < -0.01 && (
+                    <>
+                      ; they still owe about{" "}
+                      <span className="font-semibold text-destructive">
+                        {formatMoney(-p.net, group.currency)}
+                      </span>
+                    </>
+                  )}
+                  {Math.abs(p.net) <= 0.01 && " (balanced for now)"}
+                  .
+                </span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3 sm:grid-cols-3">
         <SummaryCard
           icon={<Wallet className="h-4 w-4" />}
-          label="Total trip cost"
+          label="Everyone spent"
           value={formatMoney(report.totalSpent, group.currency)}
-          sub={`${report.expenseCount} expense${report.expenseCount === 1 ? "" : "s"}`}
+          sub={`That is the full trip bill across ${report.expenseCount} expense${report.expenseCount === 1 ? "" : "s"}.`}
         />
         <SummaryCard
           icon={<Receipt className="h-4 w-4" />}
-          label="Settled so far"
+          label="Paid back so far"
           value={formatMoney(report.totalSettlements, group.currency)}
           sub={
             report.totalSettlements > 0
-              ? "across all transfers"
-              : "no transfers yet"
+              ? "Recorded in Settle up — money that already changed hands."
+              : "No settlement transfers logged yet."
           }
         />
         <SummaryCard
           icon={<TrendingUp className="h-4 w-4" />}
-          label="Biggest expense"
+          label="Largest single expense"
           value={
             report.largestExpense
               ? formatMoney(report.largestExpense.amount, group.currency)
@@ -94,9 +157,9 @@ export function ReportPanel({ group, expenses, settlements, currentUid }: Props)
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
           <div>
-            <CardTitle className="text-base">By category</CardTitle>
+            <CardTitle className="text-base">Where the money went</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Where the money went across the whole trip.
+              Categories as a share of the total trip cost.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={handleExport}>
@@ -130,9 +193,9 @@ export function ReportPanel({ group, expenses, settlements, currentUid }: Props)
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Per person</CardTitle>
+          <CardTitle className="text-base">Each person, line by line</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Tap a row to see every expense that contributed to their share.
+            Open someone to see every expense that affected their totals.
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -189,49 +252,63 @@ function PersonRow({
   const [open, setOpen] = useState(false);
   const netTone =
     person.net > 0.01 ? "text-success" : person.net < -0.01 ? "text-destructive" : "text-muted-foreground";
-  const netLabel =
-    person.net > 0.01 ? "is owed" : person.net < -0.01 ? "owes" : "settled";
+  const netHuman =
+    person.net > 0.01
+      ? "Should get back"
+      : person.net < -0.01
+        ? "Still owes"
+        : "Balanced";
 
   return (
     <li>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/30"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/30"
         aria-expanded={open}
       >
         {open ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
         )}
-        <Avatar className="h-9 w-9">
+        <Avatar className="h-9 w-9 shrink-0">
           {person.photoURL && <AvatarImage src={person.photoURL} alt={person.name} />}
           <AvatarFallback className="text-xs">
             {initials(person.name)}
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-foreground">
               {person.name}
               {isMe && (
-                <Badge variant="secondary" className="ml-2 text-[10px]">
+                <Badge variant="secondary" className="ml-1 align-middle text-[10px]">
                   you
                 </Badge>
               )}
             </p>
           </div>
-          <p className="truncate text-xs text-muted-foreground">
-            paid {formatMoney(person.totalPaid, currency)} · share{" "}
-            {formatMoney(person.totalShare, currency)}
+          <p className="mt-1 text-sm leading-snug text-muted-foreground">
+            <span className="font-medium text-foreground">{person.name}</span> put{" "}
+            <span className="font-semibold text-foreground">
+              {formatMoney(person.totalPaid, currency)}
+            </span>{" "}
+            on the tab for this trip.
+          </p>
+          <p className="mt-1 text-sm leading-snug text-muted-foreground">
+            After everyone&apos;s share is counted,{" "}
+            <span className="font-semibold text-foreground">
+              this trip cost them {formatMoney(person.totalShare, currency)}
+            </span>{" "}
+            in total — that is their full &quot;fair share&quot; of the bill.
           </p>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <p className={`text-sm font-semibold ${netTone}`}>
             {formatMoney(Math.abs(person.net), currency)}
           </p>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            {netLabel}
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {netHuman}
           </p>
         </div>
       </button>
@@ -240,8 +317,11 @@ function PersonRow({
         <div className="space-y-3 border-t bg-muted/20 px-4 py-3">
           {person.byCategory.length > 0 && (
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Their share by category
+              <p className="mb-1 text-sm font-medium text-foreground">
+                How their {formatMoney(person.totalShare, currency)} share breaks down
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                By category — what portion of their total trip cost went where.
               </p>
               <ul className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                 {person.byCategory.map((c) => (
@@ -260,8 +340,12 @@ function PersonRow({
           )}
 
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Expense ledger ({person.expenses.length})
+            <p className="mb-1 text-sm font-medium text-foreground">
+              Every expense that involves {person.name}
+            </p>
+            <p className="mb-2 text-xs text-muted-foreground">
+              {person.expenses.length} line
+              {person.expenses.length === 1 ? "" : "s"} — what they paid vs. their slice.
             </p>
             {person.expenses.length === 0 ? (
               <p className="text-xs text-muted-foreground">
@@ -289,7 +373,7 @@ function PersonRow({
                       )}
                       {e.share > 0 && (
                         <p className="font-mono text-muted-foreground">
-                          share {formatMoney(e.share, currency)}
+                          their share {formatMoney(e.share, currency)}
                         </p>
                       )}
                     </div>
@@ -300,15 +384,26 @@ function PersonRow({
           </div>
 
           {(person.settledOut > 0 || person.settledIn > 0) && (
-            <p className="text-xs text-muted-foreground">
-              Settlements:{" "}
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground">Settlements: </span>
               {person.settledOut > 0 && (
-                <>paid out {formatMoney(person.settledOut, currency)}</>
+                <>
+                  they sent{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatMoney(person.settledOut, currency)}
+                  </span>
+                </>
               )}
-              {person.settledOut > 0 && person.settledIn > 0 && " · "}
+              {person.settledOut > 0 && person.settledIn > 0 && " and "}
               {person.settledIn > 0 && (
-                <>received {formatMoney(person.settledIn, currency)}</>
+                <>
+                  they received{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatMoney(person.settledIn, currency)}
+                  </span>
+                </>
               )}
+              {" "}through recorded transfers.
             </p>
           )}
         </div>

@@ -243,7 +243,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-w-[min(100vw-1.5rem,36rem)] overflow-x-hidden sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? "Edit expense" : "Add expense"}</DialogTitle>
           <DialogDescription>
@@ -280,11 +280,11 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="min-w-0 space-y-1.5">
               <Label>Category</Label>
               <Select value={category} onValueChange={(v) => setCategory(v as ExpenseCategory)}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -296,10 +296,10 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label>Paid by</Label>
               <Select value={paidBy} onValueChange={setPaidBy}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select payer" />
                 </SelectTrigger>
                 <SelectContent>
@@ -311,21 +311,24 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5 sm:col-span-2">
               <Label htmlFor="date">Date & time</Label>
-              <div className="flex gap-2">
+              <p className="text-xs text-muted-foreground">
+                When the expense happened (defaults to right now).
+              </p>
+              <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-stretch">
                 <Input
                   id="date"
                   type="datetime-local"
                   value={dateLocal}
                   onChange={(e) => setDateLocal(e.target.value)}
                   max={toDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000))}
+                  className="h-10 w-full min-w-0 max-w-full flex-1 font-mono text-sm tabular-nums"
                 />
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
-                  className="shrink-0"
+                  className="h-10 w-full shrink-0 sm:w-auto sm:px-4"
                   onClick={() => setDateLocal(toDateTimeLocal(new Date()))}
                   title="Reset to now"
                 >
