@@ -3,6 +3,7 @@ import {
   balanceFor,
   calculateBalances,
   directDebtTransfers,
+  grossDirectedOwingFromExpenses,
   simplifyDebts,
 } from "@/lib/balance/calculate";
 import type { ExpenseDoc, SettlementDoc } from "@/lib/firebase/types";
@@ -119,6 +120,49 @@ describe("simplifyDebts", () => {
     expect(totalIn.b ?? 0).toBe(40);
     expect(totalOut.c ?? 0).toBe(30);
     expect(totalOut.d ?? 0).toBe(70);
+  });
+});
+
+describe("grossDirectedOwingFromExpenses", () => {
+  it("aggregates all shares a participant owes the payer", () => {
+    const e1 = exp("a", 100, [
+      ["a", 40],
+      ["b", 60],
+    ]);
+    const e2 = exp("a", 50, [
+      ["a", 10],
+      ["b", 40],
+    ]);
+    expect(grossDirectedOwingFromExpenses([e1, e2])).toEqual([
+      { fromUid: "b", toUid: "a", amount: 100 },
+    ]);
+  });
+
+  it("keeps opposite directions as separate rows (unlike net minimization)", () => {
+    const e1 = exp("a", 100, [
+      ["a", 50],
+      ["b", 50],
+    ]);
+    const e2 = exp("b", 100, [
+      ["b", 50],
+      ["a", 50],
+    ]);
+    const gross = grossDirectedOwingFromExpenses([e1, e2]);
+    expect(gross).toHaveLength(2);
+    expect(gross.find((t) => t.fromUid === "b" && t.toUid === "a")?.amount).toBe(
+      50
+    );
+    expect(gross.find((t) => t.fromUid === "a" && t.toUid === "b")?.amount).toBe(
+      50
+    );
+    const nets = [
+      { uid: "a", paid: 0, owed: 0, net: 0 },
+      { uid: "b", paid: 0, owed: 0, net: 0 },
+    ];
+    // a paid 100+0 on e1? exp a paid 100, owed 50 on e1; e2 b paid, a owed 50
+    nets[0] = { uid: "a", paid: 100, owed: 100, net: 0 };
+    nets[1] = { uid: "b", paid: 100, owed: 100, net: 0 };
+    expect(simplifyDebts(nets)).toHaveLength(0);
   });
 });
 

@@ -191,6 +191,7 @@ export default function TripDetailPage() {
         <TabsContent value="settle">
           <SettlementPanel
             group={group}
+            expenses={expenses}
             balances={balances}
             settlements={settlements}
           />

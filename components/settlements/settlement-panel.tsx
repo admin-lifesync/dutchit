@@ -35,7 +35,7 @@ import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/error-codes";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
-  directDebtTransfers,
+  grossDirectedOwingFromExpenses,
   simplifyDebts,
   type MemberBalance,
   type Transfer,
@@ -44,17 +44,23 @@ import {
   SettlementTransferCard,
   settlementTransferKey,
 } from "@/components/settlements/settlement-transfer-card";
-import type { GroupDoc, SettlementDoc } from "@/lib/firebase/types";
+import type { ExpenseDoc, GroupDoc, SettlementDoc } from "@/lib/firebase/types";
 
 export type SettlementViewMode = "direct" | "minimized";
 
 interface Props {
   group: GroupDoc;
+  expenses: ExpenseDoc[];
   balances: MemberBalance[];
   settlements: SettlementDoc[];
 }
 
-export function SettlementPanel({ group, balances, settlements }: Props) {
+export function SettlementPanel({
+  group,
+  expenses,
+  balances,
+  settlements,
+}: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [mode, setMode] = useState<SettlementViewMode>("direct");
@@ -64,15 +70,9 @@ export function SettlementPanel({ group, balances, settlements }: Props) {
   const isAdmin =
     group.members.find((m) => m.uid === user?.uid)?.role === "admin";
 
-  const nameByUid = useMemo(() => {
-    const o: Record<string, string> = {};
-    for (const m of group.members) o[m.uid] = m.name;
-    return o;
-  }, [group.members]);
-
   const directTransfers = useMemo(
-    () => directDebtTransfers(balances, nameByUid),
-    [balances, nameByUid]
+    () => grossDirectedOwingFromExpenses(expenses),
+    [expenses]
   );
   const minimizedTransfers = useMemo(
     () => simplifyDebts(balances),
@@ -153,13 +153,19 @@ export function SettlementPanel({ group, balances, settlements }: Props) {
             {mode === "direct" ? (
               <>
                 <p className="font-medium text-foreground">
-                  Direct settlements (default)
+                  Direct — from each expense
                 </p>
                 <p>
-                  Uses everyone&apos;s real balances — who paid what vs. their
-                  share — and lists pay-downs in a fixed name order. No
-                  cross-group optimization; best when you want the clearest
-                  picture of who owes whom.
+                  Every line is money someone still owes the person who paid for
+                  a bill (their share on that expense). Amounts are summed from
+                  the expense list only — they do <span className="font-medium">not</span>{" "}
+                  shrink when you record a settlement (see balances above for
+                  what&apos;s left). We do <span className="font-medium">not</span>{" "}
+                  merge across the whole group the way{" "}
+                  <span className="font-medium">Minimized</span> does. Use{" "}
+                  <span className="font-medium">Minimized</span> for the fewest
+                  payments that match everyone&apos;s current balance (including
+                  settlements you already logged).
                 </p>
               </>
             ) : (
@@ -255,13 +261,13 @@ export function SettlementPanel({ group, balances, settlements }: Props) {
         <CardHeader>
           <CardTitle>
             {mode === "direct"
-              ? "Direct payment lines"
+              ? "Who owes whom (from expenses)"
               : "Minimized payment plan"}
           </CardTitle>
           <CardDescription>
             {mode === "direct"
-              ? "Pay these amounts to move balances toward zero — no optimization across the group."
-              : "Optimized list — usually fewer payments. Ask an admin to mark these paid."}
+              ? "Each row adds up every time someone owed the payer on a shared expense. This is the trip ledger, not the smallest number of transfers."
+              : "Fewest transfers from current balances — usually fewer lines than Direct."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

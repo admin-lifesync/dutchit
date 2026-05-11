@@ -91,6 +91,48 @@ export function simplifyDebts(balances: MemberBalance[]): Transfer[] {
   return transfers;
 }
 
+const _PAIR_KEY_SEP = "\x1e";
+
+/**
+ * **Direct** settlement lines: who owes whom **straight from the expense
+ * ledger** — each non-payer participant owes the payer their `owed` share on
+ * that bill. Same debtor→creditor direction is summed across expenses.
+ * Opposite directions (A→B and B→A) stay as separate rows, so this list is
+ * intentionally different from {@link simplifyDebts}, which works off net
+ * balances and merges the whole group into fewer payments.
+ */
+export function grossDirectedOwingFromExpenses(
+  expenses: ExpenseDoc[]
+): Transfer[] {
+  const m = new Map<string, number>();
+  const key = (from: string, to: string) => `${from}${_PAIR_KEY_SEP}${to}`;
+
+  for (const e of expenses) {
+    const payer = e.paidBy;
+    for (const sv of e.splitValues) {
+      if (sv.uid === payer) continue;
+      if (sv.owed <= 0.01) continue;
+      const k = key(sv.uid, payer);
+      m.set(k, round2((m.get(k) ?? 0) + sv.owed));
+    }
+  }
+
+  const out: Transfer[] = [];
+  for (const [k, amount] of m) {
+    if (amount <= 0.01) continue;
+    const [fromUid, toUid] = k.split(_PAIR_KEY_SEP);
+    if (!fromUid || !toUid) continue;
+    out.push({ fromUid, toUid, amount });
+  }
+  out.sort((a, b) => {
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    const cf = a.fromUid.localeCompare(b.fromUid);
+    if (cf !== 0) return cf;
+    return a.toUid.localeCompare(b.toUid);
+  });
+  return out;
+}
+
 /**
  * Pairwise settlements **without** the amount-based greedy used by
  * {@link simplifyDebts}. Creditors and debtors are ordered alphabetically by
