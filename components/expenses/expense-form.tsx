@@ -25,7 +25,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CategoryIcon, EXPENSE_CATEGORIES } from "@/components/expenses/category-icon";
 import { computeSplit } from "@/lib/splits/compute";
 import { getCurrencySymbol } from "@/lib/currency";
-import { initials, round2, sum } from "@/lib/utils";
+import { initials, round2, sum, toDateTimeLocal } from "@/lib/utils";
+import { expenseDate } from "@/lib/expense-date";
 import { useToast } from "@/hooks/use-toast";
 import { handleError } from "@/lib/errors/handle-error";
 import { createExpense, updateExpense } from "@/lib/firebase/firestore";
@@ -77,6 +78,9 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
   const [shareValues, setShareValues] = useState<ValueMap>(EMPTY_VALUES);
   const [personalUid, setPersonalUid] = useState<string>(user?.uid || "");
   const [notes, setNotes] = useState("");
+  // Local-tz YYYY-MM-DDTHH:MM string. Empty means "use server time" (only on
+  // first create; we still render today's date as the default in the input).
+  const [dateLocal, setDateLocal] = useState<string>("");
 
   // Reset / hydrate when opened.
   useEffect(() => {
@@ -97,6 +101,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
       setShareValues(expense.splitType === "share" ? vals : EMPTY_VALUES);
       setPersonalUid(expense.splitType === "personal" ? expense.participants[0] || "" : "");
       setNotes(expense.notes || "");
+      setDateLocal(toDateTimeLocal(expenseDate(expense)));
     } else {
       setTitle("");
       setAmount("");
@@ -110,6 +115,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
       setShareValues(EMPTY_VALUES);
       setPersonalUid(user?.uid || "");
       setNotes("");
+      setDateLocal(toDateTimeLocal(new Date()));
     }
   }, [open, expense, group, user]);
 
@@ -191,6 +197,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
     }
     try {
       setSubmitting(true);
+      const pickedDate = dateLocal ? new Date(dateLocal) : null;
       const payload = {
         groupId: group.id,
         title: title.trim(),
@@ -207,6 +214,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
         notes: notes.trim(),
         receiptURL: null,
         createdBy: editing ? expense!.createdBy : user.uid,
+        date: pickedDate && !Number.isNaN(pickedDate.getTime()) ? pickedDate : null,
       };
       if (editing && expense) {
         await updateExpense(group.id, expense.id, payload, {
@@ -272,7 +280,7 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label>Category</Label>
               <Select value={category} onValueChange={(v) => setCategory(v as ExpenseCategory)}>
@@ -302,6 +310,28 @@ export function ExpenseForm({ group, open, onOpenChange, expense }: Props) {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="date">Date & time</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="date"
+                  type="datetime-local"
+                  value={dateLocal}
+                  onChange={(e) => setDateLocal(e.target.value)}
+                  max={toDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000))}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setDateLocal(toDateTimeLocal(new Date()))}
+                  title="Reset to now"
+                >
+                  Now
+                </Button>
+              </div>
             </div>
           </div>
 

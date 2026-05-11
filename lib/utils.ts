@@ -21,6 +21,41 @@ export function formatDate(date: Date | number | string): string {
   });
 }
 
+export function formatDateTime(date: Date | number | string): string {
+  const d = new Date(date);
+  return d.toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Same day check — used to group expenses by date. */
+export function isSameDay(a: Date | number, b: Date | number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+/**
+ * Convert a Date to the value string accepted by `<input type="datetime-local">`
+ * — that input always uses the user's local timezone but expects the
+ * `YYYY-MM-DDTHH:MM` shape with no offset suffix.
+ */
+export function toDateTimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
 export function formatRelativeTime(date: Date | number | string): string {
   const d = new Date(date);
   const diff = Date.now() - d.getTime();

@@ -95,6 +95,14 @@ export interface ExpenseDoc {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  /**
+   * The day & time the expense actually happened (user-editable).
+   * Defaults to the moment the expense was first added. Optional in the
+   * type so legacy expenses (created before this field existed) keep
+   * working — readers should fall back to {@link createdAt} via
+   * `expenseDate(expense)`.
+   */
+  date?: Timestamp;
 }
 
 export interface SettlementDoc {

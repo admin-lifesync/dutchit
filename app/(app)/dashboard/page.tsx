@@ -15,6 +15,7 @@ import { calculateBalances } from "@/lib/balance/calculate";
 import { watchExpenses, watchSettlements } from "@/lib/firebase/firestore";
 import type { ExpenseDoc, GroupDoc, SettlementDoc } from "@/lib/firebase/types";
 import { formatRelativeTime } from "@/lib/utils";
+import { expenseDateMillis } from "@/lib/expense-date";
 
 interface AggregateRow {
   group: GroupDoc;
@@ -96,11 +97,9 @@ export default function DashboardPage() {
       }
     }
     return items
-      .sort((a, b) => {
-        const ta = a.expense.createdAt?.toMillis?.() ?? 0;
-        const tb = b.expense.createdAt?.toMillis?.() ?? 0;
-        return tb - ta;
-      })
+      .sort(
+        (a, b) => expenseDateMillis(b.expense) - expenseDateMillis(a.expense)
+      )
       .slice(0, 6);
   }, [rows]);
 
@@ -210,10 +209,10 @@ export default function DashboardPage() {
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
                           {groupName}
-                          {expense.createdAt?.toMillis ? (
+                          {expenseDateMillis(expense) > 0 ? (
                             <>
                               {" · "}
-                              {formatRelativeTime(expense.createdAt.toMillis())}
+                              {formatRelativeTime(expenseDateMillis(expense))}
                             </>
                           ) : null}
                         </p>

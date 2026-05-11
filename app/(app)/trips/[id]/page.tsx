@@ -36,6 +36,7 @@ import { ExpenseDetails } from "@/components/expenses/expense-details";
 import { SettlementPanel } from "@/components/settlements/settlement-panel";
 import { MembersPanel } from "@/components/trips/members-panel";
 import { ActivityFeed } from "@/components/trips/activity-feed";
+import { ReportPanel } from "@/components/trips/report-panel";
 import { formatMoney } from "@/lib/currency";
 import { balanceFor } from "@/lib/balance/calculate";
 import { deleteExpense, deleteGroup, leaveGroup } from "@/lib/firebase/firestore";
@@ -169,19 +170,12 @@ export default function TripDetailPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="w-full sm:w-auto">
-          <TabsTrigger value="expenses" className="flex-1 sm:flex-initial">
-            Expenses
-          </TabsTrigger>
-          <TabsTrigger value="settle" className="flex-1 sm:flex-initial">
-            Settle up
-          </TabsTrigger>
-          <TabsTrigger value="members" className="flex-1 sm:flex-initial">
-            Members
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="flex-1 sm:flex-initial">
-            Activity
-          </TabsTrigger>
+        <TabsList className="grid w-full grid-cols-5 sm:inline-flex sm:w-auto">
+          <TabsTrigger value="expenses">Expenses</TabsTrigger>
+          <TabsTrigger value="settle">Settle</TabsTrigger>
+          <TabsTrigger value="report">Report</TabsTrigger>
+          <TabsTrigger value="members">Members</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="expenses" className="space-y-3">
@@ -200,6 +194,14 @@ export default function TripDetailPage() {
             balances={balances}
             transfers={transfers}
             settlements={settlements}
+          />
+        </TabsContent>
+        <TabsContent value="report">
+          <ReportPanel
+            group={group}
+            expenses={expenses}
+            settlements={settlements}
+            currentUid={user?.uid || ""}
           />
         </TabsContent>
         <TabsContent value="members">

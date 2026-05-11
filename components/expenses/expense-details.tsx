@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { CategoryIcon, categoryLabel } from "@/components/expenses/category-icon";
 import { formatMoney } from "@/lib/currency";
-import { formatDate, initials } from "@/lib/utils";
+import { formatDateTime, initials } from "@/lib/utils";
+import { expenseDateMillis } from "@/lib/expense-date";
 import type { ExpenseDoc, GroupDoc, SplitType } from "@/lib/firebase/types";
 
 const SPLIT_LABEL: Record<SplitType, string> = {
@@ -45,8 +46,8 @@ export function ExpenseDetails({
               <DialogTitle className="truncate">{expense.title}</DialogTitle>
               <DialogDescription>
                 {categoryLabel(expense.category)}
-                {expense.createdAt?.toMillis ? (
-                  <> · {formatDate(expense.createdAt.toMillis())}</>
+                {expenseDateMillis(expense) > 0 ? (
+                  <> · {formatDateTime(expenseDateMillis(expense))}</>
                 ) : null}
               </DialogDescription>
             </div>

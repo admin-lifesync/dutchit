@@ -264,7 +264,24 @@ export async function leaveGroup(
 // ---- Expenses -------------------------------------------------------------
 
 export interface CreateExpenseInput
-  extends Omit<ExpenseDoc, "id" | "createdAt" | "updatedAt"> {}
+  extends Omit<ExpenseDoc, "id" | "createdAt" | "updatedAt" | "date"> {
+  /** Optional caller-supplied date. `null` falls back to server time. */
+  date?: Date | null;
+}
+
+export type UpdateExpenseInput = Partial<
+  Omit<ExpenseDoc, "id" | "groupId" | "createdAt" | "createdBy" | "date">
+> & {
+  /** Optional caller-supplied date. `null` falls back to server time. */
+  date?: Date | null;
+};
+
+/** Convert a JS Date (from a date picker) into a Firestore Timestamp. */
+function dateToTimestamp(d: Date | null | undefined): Timestamp | null {
+  if (!d) return null;
+  if (Number.isNaN(d.getTime())) return null;
+  return Timestamp.fromDate(d);
+}
 
 export async function createExpense(
   input: CreateExpenseInput,
@@ -272,6 +289,11 @@ export async function createExpense(
 ): Promise<string> {
   const db = getDb();
   const ref = doc(col.expenses(input.groupId));
+  const ts = dateToTimestamp(input.date) ?? Timestamp.now();
+  // Strip the JS-Date-typed `date` from the spread so we never write a raw
+  // Date into Firestore — only Timestamps.
+  const { date: _ignored, ...rest } = input;
+  void _ignored;
   await runTransaction(db, async (tx) => {
     const groupRef = doc(col.groups(), input.groupId);
     const groupSnap = await tx.get(groupRef);
@@ -281,7 +303,8 @@ export async function createExpense(
       });
     }
     tx.set(ref, {
-      ...input,
+      ...rest,
+      date: ts,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -304,11 +327,14 @@ export async function createExpense(
 export async function updateExpense(
   groupId: string,
   expenseId: string,
-  patch: Partial<Omit<ExpenseDoc, "id" | "groupId" | "createdAt" | "createdBy">>,
+  patch: UpdateExpenseInput,
   actor: { uid: string; name: string }
 ): Promise<void> {
   const db = getDb();
   const ref = doc(col.expenses(groupId), expenseId);
+  // Pull `date` out so we can convert it; everything else passes through.
+  const { date: dateRaw, ...rest } = patch;
+  const dateTs = dateRaw === undefined ? undefined : dateToTimestamp(dateRaw);
   await runTransaction(db, async (tx) => {
     const groupRef = doc(col.groups(), groupId);
     const [snap, groupSnap] = await Promise.all([tx.get(ref), tx.get(groupRef)]);
@@ -321,7 +347,12 @@ export async function updateExpense(
       throw new AppError(ERROR_CODES.GRP_NOT_FOUND, { context: { groupId } });
     }
     const old = snap.data() as ExpenseDoc;
-    tx.update(ref, { ...patch, updatedAt: serverTimestamp() });
+    const updateBody: Record<string, unknown> = {
+      ...rest,
+      updatedAt: serverTimestamp(),
+    };
+    if (dateTs !== undefined) updateBody.date = dateTs;
+    tx.update(ref, updateBody);
     if (patch.amount !== undefined && patch.amount !== old.amount) {
       tx.update(groupRef, {
         totalSpent: increment(patch.amount - old.amount),
