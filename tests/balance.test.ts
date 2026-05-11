@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   balanceFor,
   calculateBalances,
+  directDebtTransfers,
   simplifyDebts,
 } from "@/lib/balance/calculate";
 import type { ExpenseDoc, SettlementDoc } from "@/lib/firebase/types";
@@ -118,5 +119,48 @@ describe("simplifyDebts", () => {
     expect(totalIn.b ?? 0).toBe(40);
     expect(totalOut.c ?? 0).toBe(30);
     expect(totalOut.d ?? 0).toBe(70);
+  });
+});
+
+describe("directDebtTransfers", () => {
+  it("returns empty when no debtors or creditors", () => {
+    expect(
+      directDebtTransfers(
+        [
+          { uid: "a", paid: 0, owed: 0, net: 0 },
+          { uid: "b", paid: 0, owed: 0, net: 0 },
+        ],
+        { a: "Ann", b: "Bob" }
+      )
+    ).toEqual([]);
+  });
+
+  it("pairs debtor to creditor for a simple two-person debt", () => {
+    const balances = [
+      { uid: "a", paid: 0, owed: 0, net: 50 },
+      { uid: "b", paid: 0, owed: 0, net: -50 },
+    ];
+    expect(directDebtTransfers(balances, { a: "Zara", b: "Mia" })).toEqual([
+      { fromUid: "b", toUid: "a", amount: 50 },
+    ]);
+  });
+
+  it("uses name-ordered pairing and can differ from amount-greedy minimization", () => {
+    const balances = [
+      { uid: "a", paid: 0, owed: 0, net: 60 },
+      { uid: "b", paid: 0, owed: 0, net: 40 },
+      { uid: "c", paid: 0, owed: 0, net: -30 },
+      { uid: "d", paid: 0, owed: 0, net: -70 },
+    ];
+    const names = { a: "ann", b: "bob", c: "cam", d: "dan" };
+    const direct = directDebtTransfers(balances, names);
+    const min = simplifyDebts(balances);
+    const sumOut = (list: typeof direct, uid: string) =>
+      list.filter((t) => t.fromUid === uid).reduce((s, t) => s + t.amount, 0);
+    expect(sumOut(direct, "c")).toBe(30);
+    expect(sumOut(direct, "d")).toBe(70);
+    expect(sumOut(min, "c")).toBe(30);
+    expect(sumOut(min, "d")).toBe(70);
+    expect(direct).not.toEqual(min);
   });
 });

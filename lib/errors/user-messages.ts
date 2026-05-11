@@ -91,6 +91,11 @@ export const USER_MESSAGES: Record<ErrorCode, UserMessage> = {
     title: "You can't record this settlement",
     description: "Only members of this trip can mark settlements as paid.",
   },
+  [ERROR_CODES.STL_MINIMIZED_ADMIN_ONLY]: {
+    title: "Only group admins can finalize minimized settlements",
+    description:
+      "Minimized transfers change how debts are grouped across the whole trip. Ask an admin to record them, or use Direct to log a payment along a specific path.",
+  },
   [ERROR_CODES.STL_SAVE_FAILED]: {
     title: "Couldn't record this settlement",
     description: "Please try again in a moment.",

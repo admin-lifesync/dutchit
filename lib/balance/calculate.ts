@@ -91,6 +91,48 @@ export function simplifyDebts(balances: MemberBalance[]): Transfer[] {
   return transfers;
 }
 
+/**
+ * Pairwise settlements **without** the amount-based greedy used by
+ * {@link simplifyDebts}. Creditors and debtors are ordered alphabetically by
+ * display name (falling back to uid), then each debtor pays down creditors in
+ * that fixed order. This reflects the same underlying net balances but often
+ * produces a different (sometimes longer) list of transfers — useful when you
+ * want a deterministic "who pays whom" story before turning on optimization.
+ */
+export function directDebtTransfers(
+  balances: MemberBalance[],
+  memberNames: Record<string, string>
+): Transfer[] {
+  const sortKey = (uid: string) =>
+    (memberNames[uid] ?? uid).toLowerCase().trim();
+
+  const creditors = balances
+    .filter((b) => b.net > 0.01)
+    .map((b) => ({ uid: b.uid, remaining: round2(b.net) }))
+    .sort((a, b) => sortKey(a.uid).localeCompare(sortKey(b.uid)));
+
+  const debtors = balances
+    .filter((b) => b.net < -0.01)
+    .map((b) => ({ uid: b.uid, remaining: round2(-b.net) }))
+    .sort((a, b) => sortKey(a.uid).localeCompare(sortKey(b.uid)));
+
+  const transfers: Transfer[] = [];
+  for (const d of debtors) {
+    let left = d.remaining;
+    for (const c of creditors) {
+      if (left <= 0.01) break;
+      if (c.remaining <= 0.01) continue;
+      const pay = round2(Math.min(left, c.remaining));
+      if (pay > 0.01) {
+        transfers.push({ fromUid: d.uid, toUid: c.uid, amount: pay });
+        left = round2(left - pay);
+        c.remaining = round2(c.remaining - pay);
+      }
+    }
+  }
+  return transfers;
+}
+
 /** Convenience: balances for one user, including paid/owed/net. */
 export function balanceFor(
   uid: string,

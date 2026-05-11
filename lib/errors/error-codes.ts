@@ -53,6 +53,8 @@ export const ERROR_CODES = {
   // -------- Settlements --------
   STL_VALIDATION: "ERR-STL-400",
   STL_FORBIDDEN: "ERR-STL-403",
+  /** Only admins may record payments from the minimized transfer list. */
+  STL_MINIMIZED_ADMIN_ONLY: "ERR-STL-428",
   STL_SAVE_FAILED: "ERR-STL-500",
 
   // -------- Invitations --------

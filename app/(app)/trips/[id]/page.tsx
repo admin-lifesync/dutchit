@@ -56,7 +56,7 @@ export default function TripDetailPage() {
   const { user } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
-  const { group, expenses, settlements, balances, transfers, activity, loading } =
+  const { group, expenses, settlements, balances, activity, loading } =
     useTrip(groupId);
 
   const [tab, setTab] = useState("expenses");
@@ -192,7 +192,6 @@ export default function TripDetailPage() {
           <SettlementPanel
             group={group}
             balances={balances}
-            transfers={transfers}
             settlements={settlements}
           />
         </TabsContent>

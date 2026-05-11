@@ -7,7 +7,7 @@ import {
   watchGroup,
   watchSettlements,
 } from "@/lib/firebase/firestore";
-import { calculateBalances, simplifyDebts } from "@/lib/balance/calculate";
+import { calculateBalances } from "@/lib/balance/calculate";
 import type {
   ActivityLogDoc,
   ExpenseDoc,
@@ -67,7 +67,5 @@ export function useTrip(groupId: string) {
     return calculateBalances(group.memberIds, expenses, settlements);
   }, [group, expenses, settlements]);
 
-  const transfers = useMemo(() => simplifyDebts(balances), [balances]);
-
-  return { group, expenses, settlements, activity, balances, transfers, loading };
+  return { group, expenses, settlements, activity, balances, loading };
 }
