@@ -6,9 +6,13 @@ import {
   ArrowRight,
   CheckCircle2,
   CircleHelp,
+  Clock,
   Loader2,
+  XCircle,
+  MinusCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -36,15 +40,21 @@ import {
 } from "@/components/ui/select";
 import { formatMoney } from "@/lib/currency";
 import { initials, formatRelativeTime, round2, sum } from "@/lib/utils";
-import { createSettlement } from "@/lib/firebase/firestore";
+import {
+  acceptSettlement,
+  cancelSettlement,
+  createSettlement,
+  rejectSettlement,
+  setSettlementMode,
+} from "@/lib/firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { handleError } from "@/lib/errors/handle-error";
 import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/error-codes";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
-  grossDirectedOwingFromExpenses,
-  simplifyDebts,
+  calculateDirectSettlements,
+  calculateMinimizedSettlements,
   type MemberBalance,
   type Transfer,
 } from "@/lib/balance/calculate";
@@ -52,6 +62,7 @@ import {
   SettlementTransferCard,
   settlementTransferKey,
 } from "@/components/settlements/settlement-transfer-card";
+import { PendingSettlementCard } from "@/components/settlements/pending-settlement-card";
 import type { ExpenseDoc, GroupDoc, SettlementDoc } from "@/lib/firebase/types";
 
 export type SettlementViewMode = "direct" | "minimized";
@@ -71,19 +82,41 @@ export function SettlementPanel({
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [mode, setMode] = useState<SettlementViewMode>("direct");
+
+  // Task 7.1: Read mode from group.settlementMode, not local default
+  const [mode, setMode] = useState<SettlementViewMode>(group.settlementMode ?? "direct");
+
+  // Task 7.1: Sync when group.settlementMode changes (e.g. admin switches mode)
+  useEffect(() => {
+    setMode(group.settlementMode ?? "direct");
+  }, [group.settlementMode]);
+
   const [pending, setPending] = useState<Transfer | null>(null);
   const [recordingKey, setRecordingKey] = useState<string | null>(null);
-  /** Creditor picked in Direct mode (who people paid for on the trip). */
-  const [directCreditorUid, setDirectCreditorUid] = useState<string | null>(
-    null
-  );
+  const [directCreditorUid, setDirectCreditorUid] = useState<string | null>(null);
+  // Per-card acting state for pending settlement actions
+  const [actingSettlementId, setActingSettlementId] = useState<string | null>(null);
 
   const isAdmin =
     group.members.find((m) => m.uid === user?.uid)?.role === "admin";
 
+  // Task 7.2: Admin-only mode toggle handler
+  const handleModeChange = useCallback(
+    async (newMode: SettlementViewMode) => {
+      if (!isAdmin || !user) return;
+      setMode(newMode); // optimistic update
+      try {
+        await setSettlementMode(group.id, newMode, user.uid);
+      } catch (e) {
+        setMode(mode); // revert on error
+        handleError(e, { domain: "settlement", context: { groupId: group.id } });
+      }
+    },
+    [isAdmin, user, group.id, mode]
+  );
+
   const directTransfers = useMemo(
-    () => grossDirectedOwingFromExpenses(expenses),
+    () => calculateDirectSettlements(expenses),
     [expenses]
   );
   const creditorGroups = useMemo(
@@ -107,7 +140,7 @@ export function SettlementPanel({
   }, [mode, creditorGroups, user?.uid]);
 
   const minimizedTransfers = useMemo(
-    () => simplifyDebts(balances),
+    () => calculateMinimizedSettlements(balances),
     [balances]
   );
 
@@ -135,6 +168,60 @@ export function SettlementPanel({
     [group.id, isAdmin, mode]
   );
 
+  // Task 7.3: Pending settlements for the current user (as receiver)
+  const pendingForMe = useMemo(
+    () => settlements.filter((s) => s.status === "pending" && s.toUid === user?.uid),
+    [settlements, user?.uid]
+  );
+
+  const handleAccept = useCallback(
+    async (settlementId: string) => {
+      if (!user) return;
+      setActingSettlementId(settlementId);
+      try {
+        await acceptSettlement(group.id, settlementId, { uid: user.uid, name: user.name });
+        toast({ title: "Payment confirmed", variant: "success" });
+      } catch (e) {
+        handleError(e, { domain: "settlement", context: { groupId: group.id, settlementId } });
+      } finally {
+        setActingSettlementId(null);
+      }
+    },
+    [user, group.id, toast]
+  );
+
+  const handleReject = useCallback(
+    async (settlementId: string) => {
+      if (!user) return;
+      setActingSettlementId(settlementId);
+      try {
+        await rejectSettlement(group.id, settlementId, { uid: user.uid, name: user.name });
+        toast({ title: "Payment request declined" });
+      } catch (e) {
+        handleError(e, { domain: "settlement", context: { groupId: group.id, settlementId } });
+      } finally {
+        setActingSettlementId(null);
+      }
+    },
+    [user, group.id, toast]
+  );
+
+  const handleCancel = useCallback(
+    async (settlementId: string) => {
+      if (!user) return;
+      setActingSettlementId(settlementId);
+      try {
+        await cancelSettlement(group.id, settlementId, { uid: user.uid, name: user.name }, isAdmin);
+        toast({ title: "Payment request cancelled" });
+      } catch (e) {
+        handleError(e, { domain: "settlement", context: { groupId: group.id, settlementId } });
+      } finally {
+        setActingSettlementId(null);
+      }
+    },
+    [user, group.id, isAdmin, toast]
+  );
+
   return (
     <div className="space-y-6">
       {/* Sticky mode switch + context */}
@@ -153,16 +240,19 @@ export function SettlementPanel({
             }}
             transition={{ type: "spring", stiffness: 420, damping: 34 }}
           />
+          {/* Task 7.2: Admin-only gate on mode toggle */}
           <button
             type="button"
             role="tab"
             aria-selected={mode === "direct"}
+            aria-disabled={!isAdmin ? true : undefined}
+            tabIndex={!isAdmin ? -1 : undefined}
             className={`relative z-10 flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
               mode === "direct"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setMode("direct")}
+            } ${!isAdmin ? "cursor-default" : ""}`}
+            onClick={() => { if (isAdmin) handleModeChange("direct"); }}
           >
             Direct
           </button>
@@ -170,16 +260,24 @@ export function SettlementPanel({
             type="button"
             role="tab"
             aria-selected={mode === "minimized"}
+            aria-disabled={!isAdmin ? true : undefined}
+            tabIndex={!isAdmin ? -1 : undefined}
             className={`relative z-10 flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
               mode === "minimized"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setMode("minimized")}
+            } ${!isAdmin ? "cursor-default" : ""}`}
+            onClick={() => { if (isAdmin) handleModeChange("minimized"); }}
           >
             Minimized
           </button>
         </div>
+
+        {!isAdmin && (
+          <p className="rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Settlement mode is set by a group admin. You can view transfers but cannot switch modes.
+          </p>
+        )}
 
         <div className="flex gap-2 rounded-xl border border-dashed bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
           <CircleHelp
@@ -225,12 +323,41 @@ export function SettlementPanel({
         </div>
       </div>
 
+      {/* Task 7.3: Pending Actions panel for receivers */}
+      {pendingForMe.length > 0 && (
+        <Card className="border-amber-500/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Pending Actions
+              <Badge variant="outline" className="text-amber-600 border-amber-400">
+                {pendingForMe.length}
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              Someone sent you a payment request. Accept to confirm receipt or reject to decline.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pendingForMe.map((s) => (
+              <PendingSettlementCard
+                key={s.id}
+                settlement={s}
+                group={group}
+                isActing={actingSettlementId === s.id}
+                onAccept={() => handleAccept(s.id)}
+                onReject={() => handleReject(s.id)}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Raw balances first */}
       <Card>
         <CardHeader>
           <CardTitle>Where everyone stands</CardTitle>
           <CardDescription>
-            Original balances from expenses and any settlements already logged.
+            Original balances from expenses and any accepted settlements already logged.
             Net = paid − owed (positive means the group still owes them).
           </CardDescription>
         </CardHeader>
@@ -436,11 +563,12 @@ export function SettlementPanel({
         </CardContent>
       </Card>
 
+      {/* Task 7.4: Settlement history with status badges and cancel action */}
       <Card>
         <CardHeader>
           <CardTitle>Settlement history</CardTitle>
           <CardDescription>
-            Cash or transfers you have already recorded for this trip.
+            Payment requests you have sent or received for this trip.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -451,32 +579,82 @@ export function SettlementPanel({
               {settlements.map((s) => {
                 const from = group.members.find((m) => m.uid === s.fromUid);
                 const to = group.members.find((m) => m.uid === s.toUid);
+                const isSender = user?.uid === s.fromUid;
+                const canCancel = (isSender || isAdmin) && s.status === "pending";
+
+                const StatusIcon = () => {
+                  switch (s.status) {
+                    case "accepted":
+                      return <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />;
+                    case "rejected":
+                      return <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />;
+                    case "cancelled":
+                      return <MinusCircle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />;
+                    default:
+                      return <Clock className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />;
+                  }
+                };
+
+                const StatusBadge = () => {
+                  switch (s.status) {
+                    case "accepted":
+                      return <Badge variant="outline" className="text-green-600 border-green-400">Accepted</Badge>;
+                    case "rejected":
+                      return <Badge variant="destructive">Rejected</Badge>;
+                    case "cancelled":
+                      return <Badge variant="secondary">Cancelled</Badge>;
+                    default:
+                      return <Badge variant="outline" className="text-amber-600 border-amber-400">Pending</Badge>;
+                  }
+                };
+
                 return (
                   <li
                     key={s.id}
                     className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-3"
                   >
-                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+                    <StatusIcon />
                     <div className="min-w-0 flex-1 space-y-1">
                       <p className="text-sm leading-snug">
                         <span className="break-words font-medium">
                           {from?.name}
                         </span>{" "}
-                        <span className="text-muted-foreground">paid</span>{" "}
+                        <span className="text-muted-foreground">→</span>{" "}
                         <span className="break-words font-medium">
                           {to?.name}
                         </span>
                       </p>
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        {s.createdAt?.toMillis
-                          ? formatRelativeTime(s.createdAt.toMillis())
-                          : ""}
-                        {s.note ? ` · ${s.note}` : ""}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge />
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {s.createdAt?.toMillis
+                            ? formatRelativeTime(s.createdAt.toMillis())
+                            : ""}
+                          {s.note ? ` · ${s.note}` : ""}
+                        </p>
+                      </div>
                     </div>
-                    <span className="shrink-0 font-mono text-sm font-semibold tabular-nums">
-                      {formatMoney(s.amount, s.currency)}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span className="font-mono text-sm font-semibold tabular-nums">
+                        {formatMoney(s.amount, s.currency)}
+                      </span>
+                      {canCancel && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={actingSettlementId === s.id}
+                          onClick={() => handleCancel(s.id)}
+                        >
+                          {actingSettlementId === s.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            "Cancel"
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -485,6 +663,7 @@ export function SettlementPanel({
         </CardContent>
       </Card>
 
+      {/* Task 7.5: RecordSettlementDialog with updated copy */}
       <RecordSettlementDialog
         group={group}
         transfer={pending}
@@ -504,6 +683,8 @@ export function SettlementPanel({
           const key = settlementTransferKey(pending);
           setRecordingKey(key);
           try {
+            // Task 7.5: Only pass fields that CreateSettlementInput expects
+            // (status, updatedAt, acceptedAt, acceptedBy, rejectedAt are set server-side)
             await createSettlement(
               {
                 groupId: group.id,
@@ -516,7 +697,7 @@ export function SettlementPanel({
               },
               user.name
             );
-            toast({ title: "Settlement recorded", variant: "success" });
+            toast({ title: "Payment request sent", variant: "success" });
             setPending(null);
           } catch (e) {
             handleError(e, {
@@ -689,15 +870,15 @@ function RecordSettlementDialog({
     >
       <DialogContent className="max-w-[min(100vw-1.5rem,28rem)] overflow-x-hidden sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Record settlement</DialogTitle>
+          <DialogTitle>Send payment request</DialogTitle>
           <DialogDescription>
-            Confirm that{" "}
-            <span className="break-words font-medium text-foreground">
-              {from?.name}
-            </span>{" "}
-            paid{" "}
+            Request that{" "}
             <span className="break-words font-medium text-foreground">
               {to?.name}
+            </span>{" "}
+            confirms receipt of payment from{" "}
+            <span className="break-words font-medium text-foreground">
+              {from?.name}
             </span>
             .
           </DialogDescription>
@@ -749,7 +930,7 @@ function RecordSettlementDialog({
             }}
           >
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Mark as paid
+            Send payment request
           </Button>
         </DialogFooter>
       </DialogContent>

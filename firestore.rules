@@ -77,7 +77,8 @@ service cloud.firestore {
         // 3) Member-driven bookkeeping update. An existing member may bump
         //    counters/timestamps that change as a side-effect of adding,
         //    editing, deleting expenses, or recording settlements. They
-        //    cannot touch metadata, members, admins, or join settings.
+        //    cannot touch metadata, members, admins, join settings, or
+        //    the settlement mode (admin-only).
         || (
           isMember()
           && nextGroup().createdBy == group().createdBy
@@ -90,6 +91,7 @@ service cloud.firestore {
           && nextGroup().members == group().members
           && nextGroup().get('inviteCode', '') == group().get('inviteCode', '')
           && nextGroup().get('joinPolicy', 'open') == group().get('joinPolicy', 'open')
+          && nextGroup().get('settlementMode', 'direct') == group().get('settlementMode', 'direct')
         )
 
         // 4) Self-join: a NON-member adds themselves as a regular member.
@@ -159,13 +161,46 @@ service cloud.firestore {
         function adminOfParent() {
           return isSignedIn() && (request.auth.uid in parentGroup().adminIds);
         }
+        function isSender()   { return request.auth.uid == resource.data.fromUid; }
+        function isReceiver() { return request.auth.uid == resource.data.toUid; }
 
         allow read: if memberOfParent();
+
+        // Create: any member, must set status=pending, must be the sender
         allow create: if memberOfParent()
           && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.groupId == groupId;
-        allow update, delete: if memberOfParent()
-          && (resource.data.createdBy == request.auth.uid || adminOfParent());
+          && request.resource.data.groupId == groupId
+          && request.resource.data.status == "pending"
+          && request.resource.data.fromUid == request.auth.uid;
+
+        // Accept/Reject: only the receiver; Cancel: sender or admin — all from pending only
+        allow update: if memberOfParent()
+          && resource.data.status == "pending"
+          && (
+            // Receiver accepts
+            (isReceiver()
+              && request.resource.data.status == "accepted"
+              && request.resource.data.fromUid == resource.data.fromUid
+              && request.resource.data.toUid == resource.data.toUid
+              && request.resource.data.amount == resource.data.amount)
+            ||
+            // Receiver rejects
+            (isReceiver()
+              && request.resource.data.status == "rejected"
+              && request.resource.data.fromUid == resource.data.fromUid
+              && request.resource.data.toUid == resource.data.toUid
+              && request.resource.data.amount == resource.data.amount)
+            ||
+            // Sender or admin cancels
+            ((isSender() || adminOfParent())
+              && request.resource.data.status == "cancelled"
+              && request.resource.data.fromUid == resource.data.fromUid
+              && request.resource.data.toUid == resource.data.toUid
+              && request.resource.data.amount == resource.data.amount)
+          );
+
+        // Delete: only admins (for cleanup)
+        allow delete: if adminOfParent();
       }
 
       // ------------------------------------------------------------------

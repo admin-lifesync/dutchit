@@ -73,8 +73,13 @@ describe("calculateBalances", () => {
       amount: 50,
       currency: "INR",
       note: "",
+      status: "accepted",
       createdAt: { toMillis: () => 0 } as any,
+      updatedAt: { toMillis: () => 0 } as any,
       createdBy: "b",
+      acceptedAt: null,
+      acceptedBy: null,
+      rejectedAt: null,
     };
     const b = calculateBalances(["a", "b"], [e], [settlement]);
     // Both should now be even.

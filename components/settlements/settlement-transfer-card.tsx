@@ -2,10 +2,11 @@
 
 import { ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatMoney } from "@/lib/currency";
 import { initials } from "@/lib/utils";
-import type { GroupDoc } from "@/lib/firebase/types";
+import type { GroupDoc, SettlementStatus } from "@/lib/firebase/types";
 import type { Transfer } from "@/lib/balance/calculate";
 
 export function settlementTransferKey(t: Transfer): string {
@@ -19,6 +20,29 @@ interface Props {
   involvesYou: boolean;
   isRecording: boolean;
   onMarkPaid: () => void;
+  /** Optional status badge for history rows. */
+  status?: SettlementStatus;
+}
+
+function statusBadge(status: SettlementStatus) {
+  switch (status) {
+    case "pending":
+      return (
+        <Badge variant="outline" className="text-amber-600 border-amber-400">
+          Pending
+        </Badge>
+      );
+    case "accepted":
+      return (
+        <Badge variant="outline" className="text-green-600 border-green-400">
+          Accepted
+        </Badge>
+      );
+    case "rejected":
+      return <Badge variant="destructive">Rejected</Badge>;
+    case "cancelled":
+      return <Badge variant="secondary">Cancelled</Badge>;
+  }
 }
 
 export function SettlementTransferCard({
@@ -28,6 +52,7 @@ export function SettlementTransferCard({
   involvesYou,
   isRecording,
   onMarkPaid,
+  status,
 }: Props) {
   const from = group.members.find((m) => m.uid === transfer.fromUid);
   const to = group.members.find((m) => m.uid === transfer.toUid);
@@ -75,13 +100,14 @@ export function SettlementTransferCard({
 
       {/* Row 2: amount + action */}
       <div className="flex min-w-0 flex-col gap-3 border-t pt-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-1">
           <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             Amount
           </p>
           <p className="font-mono text-xl font-semibold tabular-nums tracking-tight">
             {formatMoney(transfer.amount, currency)}
           </p>
+          {status ? statusBadge(status) : null}
         </div>
         <Button
           type="button"

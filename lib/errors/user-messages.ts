@@ -100,6 +100,18 @@ export const USER_MESSAGES: Record<ErrorCode, UserMessage> = {
     title: "Couldn't record this settlement",
     description: "Please try again in a moment.",
   },
+  [ERROR_CODES.STL_DUPLICATE_PENDING]: {
+    title: "A payment request already exists",
+    description: "You already have a pending payment request to this person. Wait for them to respond before sending another.",
+  },
+  [ERROR_CODES.STL_NOT_FOUND]: {
+    title: "Settlement not found",
+    description: "This settlement may have been cancelled or removed. Refresh to see the latest.",
+  },
+  [ERROR_CODES.STL_INVALID_TRANSITION]: {
+    title: "This action is no longer available",
+    description: "The settlement has already been accepted, rejected, or cancelled.",
+  },
 
   // -------- Invitations --------
   [ERROR_CODES.INV_NOT_FOUND]: {

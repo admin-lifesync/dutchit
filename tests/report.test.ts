@@ -147,8 +147,13 @@ describe("buildTripReport", () => {
         amount: 50,
         currency: "INR",
         note: "",
+        status: "accepted",
         createdAt: ts(2_000),
+        updatedAt: ts(2_000),
         createdBy: "b",
+        acceptedAt: null,
+        acceptedBy: null,
+        rejectedAt: null,
       },
     ];
     const r = buildTripReport(group, expenses, settlements);

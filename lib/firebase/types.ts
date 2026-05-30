@@ -63,6 +63,11 @@ export interface GroupDoc {
    *  - `member-approval`  — any existing member can approve
    */
   joinPolicy: JoinPolicy;
+  /**
+   * Persisted settlement calculation mode. Defaults to "direct" for legacy groups.
+   * Admin-controlled and Firestore-persisted so all members see the same mode.
+   */
+  settlementMode?: "direct" | "minimized";
 }
 
 export interface SplitValue {
@@ -105,6 +110,8 @@ export interface ExpenseDoc {
   date?: Timestamp;
 }
 
+export type SettlementStatus = "pending" | "accepted" | "rejected" | "cancelled";
+
 export interface SettlementDoc {
   id: string;
   groupId: string;
@@ -113,8 +120,17 @@ export interface SettlementDoc {
   amount: number;
   currency: string;
   note: string;
+  /** Lifecycle status. New settlements start as "pending" until the receiver confirms. */
+  status: SettlementStatus;
   createdAt: Timestamp;
   createdBy: string;
+  updatedAt: Timestamp;
+  /** Set when the receiver accepts the settlement. */
+  acceptedAt: Timestamp | null;
+  /** UID of the member who accepted the settlement. */
+  acceptedBy: string | null;
+  /** Set when the receiver rejects the settlement. */
+  rejectedAt: Timestamp | null;
 }
 
 /**
@@ -163,7 +179,10 @@ export type ActivityType =
   | "expense.created"
   | "expense.updated"
   | "expense.deleted"
-  | "settlement.created";
+  | "settlement.created"
+  | "settlement.accepted"
+  | "settlement.rejected"
+  | "settlement.cancelled";
 
 export interface ActivityLogDoc {
   id: string;

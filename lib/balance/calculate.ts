@@ -43,7 +43,7 @@ export function calculateBalances(
   }
 
   // Settlement: `from` paid `to`. This reduces `from`'s debt and `to`'s credit.
-  for (const s of settlements) {
+  for (const s of settlements.filter(s => (s.status ?? "accepted") === "accepted")) {
     const from = map.get(s.fromUid);
     const to = map.get(s.toUid);
     if (from) from.paid += s.amount;
@@ -188,4 +188,22 @@ export function balanceFor(
       net: 0,
     }
   );
+}
+
+/**
+ * **Direct** settlement engine: transfers derived from the raw expense ledger.
+ * Each non-payer owes the payer their share on that specific expense.
+ * No cross-group debt merging — opposite directions stay as separate rows.
+ * Wraps {@link grossDirectedOwingFromExpenses}.
+ */
+export function calculateDirectSettlements(expenses: ExpenseDoc[]): Transfer[] {
+  return grossDirectedOwingFromExpenses(expenses);
+}
+
+/**
+ * **Minimized** settlement engine: greedy creditor/debtor pairing from net balances.
+ * Produces at most N-1 transfers. Wraps {@link simplifyDebts}.
+ */
+export function calculateMinimizedSettlements(balances: MemberBalance[]): Transfer[] {
+  return simplifyDebts(balances);
 }

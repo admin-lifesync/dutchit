@@ -56,6 +56,12 @@ export const ERROR_CODES = {
   /** Only admins may record payments from the minimized transfer list. */
   STL_MINIMIZED_ADMIN_ONLY: "ERR-STL-428",
   STL_SAVE_FAILED: "ERR-STL-500",
+  /** A pending settlement already exists between this sender/receiver pair. */
+  STL_DUPLICATE_PENDING: "ERR-STL-409",
+  /** Settlement document not found. */
+  STL_NOT_FOUND: "ERR-STL-404",
+  /** Settlement status transition is invalid (e.g. accepting an already-accepted settlement). */
+  STL_INVALID_TRANSITION: "ERR-STL-422",
 
   // -------- Invitations --------
   INV_NOT_FOUND: "ERR-INV-404",

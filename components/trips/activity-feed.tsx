@@ -1,14 +1,17 @@
 "use client";
 
 import {
+  CheckCircle2,
   CircleDot,
   LogIn,
+  MinusCircle,
   Pencil,
   Plus,
   Trash2,
   UserMinus,
   UserPlus,
   Wallet,
+  XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatRelativeTime } from "@/lib/utils";
@@ -23,6 +26,9 @@ const ICONS: Record<ActivityType, React.ComponentType<{ className?: string }>> =
   "expense.updated": Pencil,
   "expense.deleted": Trash2,
   "settlement.created": Wallet,
+  "settlement.accepted": CheckCircle2,
+  "settlement.rejected": XCircle,
+  "settlement.cancelled": MinusCircle,
 };
 
 export function ActivityFeed({ activity }: { activity: ActivityLogDoc[] }) {

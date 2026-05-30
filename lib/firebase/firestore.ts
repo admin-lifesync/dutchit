@@ -424,14 +424,37 @@ export function watchExpenses(
 // ---- Settlements ----------------------------------------------------------
 
 export interface CreateSettlementInput
-  extends Omit<SettlementDoc, "id" | "createdAt"> {}
+  extends Omit<SettlementDoc, "id" | "createdAt" | "status" | "updatedAt" | "acceptedAt" | "acceptedBy" | "rejectedAt"> {}
 
 export async function createSettlement(
   input: CreateSettlementInput,
   actorName: string
 ): Promise<string> {
+  // Duplicate check: query for existing pending settlement between same pair
+  const existingQ = query(
+    col.settlements(input.groupId),
+    where("fromUid", "==", input.fromUid),
+    where("toUid", "==", input.toUid),
+    where("status", "==", "pending"),
+    limit(1)
+  );
+  const existing = await getDocs(existingQ);
+  if (!existing.empty) {
+    throw new AppError(ERROR_CODES.STL_DUPLICATE_PENDING, {
+      context: { groupId: input.groupId, fromUid: input.fromUid, toUid: input.toUid },
+    });
+  }
+
   const ref = doc(col.settlements(input.groupId));
-  await setDoc(ref, { ...input, createdAt: serverTimestamp() });
+  await setDoc(ref, {
+    ...input,
+    status: "pending",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    acceptedAt: null,
+    acceptedBy: null,
+    rejectedAt: null,
+  });
   await updateDoc(doc(col.groups(), input.groupId), {
     updatedAt: serverTimestamp(),
   });
@@ -439,7 +462,7 @@ export async function createSettlement(
     type: "settlement.created",
     actorUid: input.createdBy,
     actorName,
-    message: `${actorName} recorded a settlement`,
+    message: `${actorName} sent a payment request`,
     meta: {
       from: input.fromUid,
       to: input.toUid,
@@ -447,6 +470,125 @@ export async function createSettlement(
     },
   });
   return ref.id;
+}
+
+export async function acceptSettlement(
+  groupId: string,
+  settlementId: string,
+  actor: { uid: string; name: string }
+): Promise<void> {
+  const ref = doc(col.settlements(groupId), settlementId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new AppError(ERROR_CODES.STL_NOT_FOUND, { context: { groupId, settlementId } });
+  }
+  const settlement = snap.data() as Omit<SettlementDoc, "id">;
+  if (settlement.status !== "pending") {
+    throw new AppError(ERROR_CODES.STL_INVALID_TRANSITION, {
+      context: { groupId, settlementId, currentStatus: settlement.status },
+    });
+  }
+  if (actor.uid !== settlement.toUid) {
+    throw new AppError(ERROR_CODES.STL_FORBIDDEN, {
+      context: { groupId, settlementId, reason: "only-receiver-can-accept" },
+    });
+  }
+  await updateDoc(ref, {
+    status: "accepted",
+    acceptedAt: serverTimestamp(),
+    acceptedBy: actor.uid,
+    updatedAt: serverTimestamp(),
+  });
+  await logActivitySafe(groupId, {
+    type: "settlement.accepted",
+    actorUid: actor.uid,
+    actorName: actor.name,
+    message: `${actor.name} confirmed receipt of payment`,
+    meta: { settlementId },
+  });
+}
+
+export async function rejectSettlement(
+  groupId: string,
+  settlementId: string,
+  actor: { uid: string; name: string }
+): Promise<void> {
+  const ref = doc(col.settlements(groupId), settlementId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new AppError(ERROR_CODES.STL_NOT_FOUND, { context: { groupId, settlementId } });
+  }
+  const settlement = snap.data() as Omit<SettlementDoc, "id">;
+  if (settlement.status !== "pending") {
+    throw new AppError(ERROR_CODES.STL_INVALID_TRANSITION, {
+      context: { groupId, settlementId, currentStatus: settlement.status },
+    });
+  }
+  if (actor.uid !== settlement.toUid) {
+    throw new AppError(ERROR_CODES.STL_FORBIDDEN, {
+      context: { groupId, settlementId, reason: "only-receiver-can-reject" },
+    });
+  }
+  await updateDoc(ref, {
+    status: "rejected",
+    rejectedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await logActivitySafe(groupId, {
+    type: "settlement.rejected",
+    actorUid: actor.uid,
+    actorName: actor.name,
+    message: `${actor.name} declined a payment request`,
+    meta: { settlementId },
+  });
+}
+
+export async function cancelSettlement(
+  groupId: string,
+  settlementId: string,
+  actor: { uid: string; name: string },
+  isAdmin: boolean
+): Promise<void> {
+  const ref = doc(col.settlements(groupId), settlementId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new AppError(ERROR_CODES.STL_NOT_FOUND, { context: { groupId, settlementId } });
+  }
+  const settlement = snap.data() as Omit<SettlementDoc, "id">;
+  if (settlement.status !== "pending") {
+    throw new AppError(ERROR_CODES.STL_INVALID_TRANSITION, {
+      context: { groupId, settlementId, currentStatus: settlement.status },
+    });
+  }
+  if (actor.uid !== settlement.fromUid && !isAdmin) {
+    throw new AppError(ERROR_CODES.STL_FORBIDDEN, {
+      context: { groupId, settlementId, reason: "only-sender-or-admin-can-cancel" },
+    });
+  }
+  await updateDoc(ref, {
+    status: "cancelled",
+    updatedAt: serverTimestamp(),
+  });
+  await logActivitySafe(groupId, {
+    type: "settlement.cancelled",
+    actorUid: actor.uid,
+    actorName: actor.name,
+    message: `${actor.name} cancelled a payment request`,
+    meta: { settlementId },
+  });
+}
+
+export async function setSettlementMode(
+  groupId: string,
+  mode: "direct" | "minimized",
+  actorUid: string
+): Promise<void> {
+  // Caller must be admin — enforced by Firestore rule; client also checks before calling.
+  void actorUid;
+  await updateDoc(doc(col.groups(), groupId), {
+    settlementMode: mode,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export function watchSettlements(
